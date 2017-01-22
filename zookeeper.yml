@@ -1,0 +1,307 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Highly Available Zookeeper Cluster
+
+Parameters:
+  ImageId:
+    Default: ami-f56181e3
+    Description: "The AMI on each node (default: CoreOS)"
+    Type: String
+
+  InstanceType:
+    Description: The instance type of each node
+    Default: m4.large
+    Type: String
+
+  KeyName:
+    Description: The SSH key pair
+    Type: AWS::EC2::KeyPair::KeyName
+
+  LbCheckGracePeriod:
+    Description: The number of seconds to wait for a node to start before health checking
+    Default: 300
+    Type: Number
+
+  LbCheckInterval:
+    Description: The number of seconds between checks
+    Default: 60
+    Type: Number
+
+  LbCheckTimeout:
+    Description: The number of seconds for a check to complete (must be less than LbCheckInterval)
+    Default: 59
+    Type: Number
+
+  LbHealthyThreshold:
+    Description: The number of consecutive successful checks to deem a node healthy
+    Default: 3
+    Type: Number
+
+  LbUnhealthyThreshold:
+    Description: The number of consecutive unsuccessful checks to deem a node unhealthy
+    Default: 3
+    Type: Number
+
+  PoolCooldownPeriod:
+    Description: The number of seconds to wait after successfully scaling up or down
+    Default: 60
+    Type: Number
+
+  PoolMaxSize:
+    Description: The maximum number of nodes in the pool
+    Default: 9
+    Type: Number
+
+  PoolMinSize:
+    Description: The minimum number of nodes in the pool
+    Default: 3
+    Type: Number
+
+  StackCreationTimeout:
+    Description: The amount of time to wait for stack creation
+    Default: PT30M
+    Type: String
+
+  SubnetOne:
+    Description: The first subnet to place nodes
+    Type: AWS::EC2::Subnet::Id
+
+  SubnetTwo:
+    Description: The second subnet to place nodes
+    Type: AWS::EC2::Subnet::Id
+
+  Vpc:
+    Description: The VPC containing subnets
+    Type: AWS::EC2::VPC::Id
+
+Resources:
+  Store:
+    Type: AWS::S3::Bucket
+
+  ZkInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+      Policies:
+        - PolicyName: ZooS3Access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                  - s3:ListBucket
+                Effect: Allow
+                Resource: !Sub arn:aws:s3:::${Store}
+              - Action:
+                  - "*"
+                Effect: Allow
+                Resource: !Sub arn:aws:s3:::${Store}/*
+
+  ZkInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref ZkInstanceRole
+
+  ZkSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Zookeeper Security Group
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: 6
+          FromPort: 22
+          ToPort: 22
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: 6
+          FromPort: 2181
+          ToPort: 2181
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: 6
+          FromPort: 2888
+          ToPort: 2888
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: 6
+          FromPort: 3888
+          ToPort: 3888
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: 6
+          FromPort: 8080
+          ToPort: 8080
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: -1
+          FromPort: 0
+          ToPort: 65535
+      VpcId: !Ref Vpc
+
+  ZkLaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: true
+            VolumeSize: 60
+      EbsOptimized: true
+      IamInstanceProfile: !Ref ZkInstanceProfile
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SecurityGroups:
+        - !Ref ZkSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #! /bin/bash -ex
+
+          # aws
+          mkdir -p /opt/aws
+          cat <<- EOF > /opt/aws/Dockerfile
+          FROM ubuntu:latest
+
+          RUN apt-get update &&\
+            apt-get install -y python python-pip &&\
+            pip install --upgrade pip awscli https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
+          EOF
+
+          # exhibitor
+          mkdir -p /opt/zookeeper
+          cat <<- EOF > /opt/zookeeper/exhibitor.properties
+          com.netflix.exhibitor-rolling-hostnames=
+          com.netflix.exhibitor-rolling.zookeeper-data-directory=/opt/zookeeper/snapshots
+          com.netflix.exhibitor-rolling.servers-spec=
+          com.netflix.exhibitor.java-environment=
+          com.netflix.exhibitor.zookeeper-data-directory=/opt/zookeeper/snapshots
+          com.netflix.exhibitor-rolling-hostnames-index=0
+          com.netflix.exhibitor-rolling.java-environment=
+          com.netflix.exhibitor-rolling.observer-threshold=999
+          com.netflix.exhibitor.servers-spec=
+          com.netflix.exhibitor.cleanup-period-ms=43200000
+          com.netflix.exhibitor.auto-manage-instances-fixed-ensemble-size=0
+          com.netflix.exhibitor.zookeeper-install-directory=/opt/zookeeper
+          com.netflix.exhibitor.check-ms=30000
+          com.netflix.exhibitor.zookeeper-log-directory=/opt/zookeeper/transactions
+          com.netflix.exhibitor-rolling.auto-manage-instances=1
+          com.netflix.exhibitor-rolling.cleanup-period-ms=43200000
+          com.netflix.exhibitor-rolling.auto-manage-instances-settling-period-ms=180000
+          com.netflix.exhibitor-rolling.check-ms=30000
+          com.netflix.exhibitor.log-index-directory=/opt/zookeeper/index
+          com.netflix.exhibitor-rolling.log-index-directory=/opt/zookeeper/index
+          com.netflix.exhibitor.backup-period-ms=60000
+          com.netflix.exhibitor-rolling.connect-port=2888
+          com.netflix.exhibitor-rolling.election-port=3888
+          com.netflix.exhibitor-rolling.backup-extra=
+          com.netflix.exhibitor.client-port=2181
+          com.netflix.exhibitor-rolling.zoo-cfg-extra=syncLimit\=5&tickTime\=2000&initLimit\=10
+          com.netflix.exhibitor-rolling.zookeeper-install-directory=/opt/zookeeper
+          com.netflix.exhibitor.cleanup-max-files=3
+          com.netflix.exhibitor-rolling.auto-manage-instances-fixed-ensemble-size=0
+          com.netflix.exhibitor-rolling.backup-period-ms=60000
+          com.netflix.exhibitor-rolling.client-port=2181
+          com.netflix.exhibitor.backup-max-store-ms=86400000
+          com.netflix.exhibitor-rolling.cleanup-max-files=3
+          com.netflix.exhibitor-rolling.backup-max-store-ms=86400000
+          com.netflix.exhibitor.connect-port=2888
+          com.netflix.exhibitor.backup-extra=
+          com.netflix.exhibitor.observer-threshold=999
+          com.netflix.exhibitor.log4j-properties=
+          com.netflix.exhibitor.auto-manage-instances-apply-all-at-once=1
+          com.netflix.exhibitor.election-port=3888
+          com.netflix.exhibitor-rolling.auto-manage-instances-apply-all-at-once=1
+          com.netflix.exhibitor.zoo-cfg-extra=syncLimit\=5&tickTime\=2000&initLimit\=10
+          com.netflix.exhibitor-rolling.zookeeper-log-directory=/opt/zookeeper/transactions
+          com.netflix.exhibitor.auto-manage-instances-settling-period-ms=180000
+          com.netflix.exhibitor-rolling.log4j-properties=
+          com.netflix.exhibitor.auto-manage-instances=1
+          EOF
+
+          cat <<- EOF > /opt/zookeeper/Dockerfile
+          FROM openjdk:8
+
+          WORKDIR /opt
+
+          RUN wget -q http://www-us.apache.org/dist/maven/maven-3/3.3.9/binaries/apache-maven-3.3.9-bin.tar.gz -O - | tar zxf - &&\
+               mv apache-maven-3.3.9 maven &&\
+               ln -s /opt/maven/bin/mvn /usr/bin/mvn &&\
+               wget -q http://www-us.apache.org/dist/zookeeper/stable/zookeeper-3.4.9.tar.gz -O - | tar xzf - &&\
+               mv zookeeper-3.4.9 zookeeper &&\
+               mkdir exhibitor && cd exhibitor &&\
+               curl -kL https://raw.github.com/Netflix/exhibitor/master/exhibitor-standalone/src/main/resources/buildscripts/standalone/maven/pom.xml -o pom.xml &&\
+               mvn clean package
+
+          CMD ["java", "-jar", "exhibitor/target/exhibitor-1.5.6.jar", "-c", "s3", "--s3config", "${Store}:exhibitor.properties"]
+          EOF
+
+          # bootstrap
+          cat <<- EOF > /opt/bootstrap.sh
+          #! /bin/bash
+
+          docker build --force-rm -t aws/cli /opt/aws
+          docker build --force-rm -t zookeeper /opt/zookeeper
+
+          exists=$(docker run -v /opt/zookeeper:/opt/zookeeper aws/cli aws s3 ls s3://${Store}/exhibitor.properties | wc -l)
+          if [ \$exists -eq 0 ]; then
+            docker run -v /opt/zookeeper:/opt/zookeeper aws/cli aws s3 cp /opt/zookeeper/exhibitor.properties s3://${Store}
+          fi
+
+          hostname=$(curl -kL http://169.254.169.254/latest/meta-data/hostname)
+          docker run -d -h \$hostname -p 2181:2181 -p 2888:2888 -p 3888:3888 -p 8080:8080 zookeeper
+          EOF
+
+          # execute
+          bash -xe /opt/bootstrap.sh
+
+          # completed
+          docker run aws/cli cfn-signal -e $? --stack ${AWS::StackName} --resource ZkAutoScalingGroup
+
+  ZkLoadBalancer:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      CrossZone: true
+      HealthCheck:
+        HealthyThreshold: !Ref LbHealthyThreshold
+        Interval: !Ref LbCheckInterval
+        Target: HTTP:8080/exhibitor/v1/ui/index.html
+        Timeout: !Ref LbCheckTimeout
+        UnhealthyThreshold: !Ref LbUnhealthyThreshold
+      Listeners:
+        - InstancePort: 2181
+          InstanceProtocol: TCP
+          LoadBalancerPort: 2181
+          Protocol: TCP
+        - InstancePort: 8080
+          InstanceProtocol: HTTP
+          LoadBalancerPort: 8080
+          Protocol: HTTP
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref ZkSecurityGroup
+      Subnets:
+        - !Ref SubnetOne
+        - !Ref SubnetTwo
+
+  ZkAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    CreationPolicy:
+      ResourceSignal:
+        Count: !Ref PoolMinSize
+        Timeout: !Ref StackCreationTimeout
+    Properties:
+      Cooldown: !Ref PoolCooldownPeriod
+      HealthCheckGracePeriod: !Ref LbCheckGracePeriod
+      HealthCheckType: ELB
+      LoadBalancerNames:
+        - !Ref ZkLoadBalancer
+      LaunchConfigurationName: !Ref ZkLaunchConfiguration
+      MaxSize: !Ref PoolMaxSize
+      MinSize: !Ref PoolMinSize
+      VPCZoneIdentifier:
+        - !Ref SubnetOne
+        - !Ref SubnetTwo
