@@ -3,6 +3,11 @@ Description: Highly Available Zookeeper Cluster
 
 ####################
 Parameters:
+  DiskSize:
+    Default: 60
+    Description: The number of GBs on the primary disk of each node
+    Type: Number
+
   ImageId:
     Default: ami-f56181e3
     Description: "The AMI on each node (default: CoreOS)"
@@ -171,7 +176,7 @@ Resources:
         - DeviceName: /dev/xvda
           Ebs:
             DeleteOnTermination: true
-            VolumeSize: 60
+            VolumeSize: !Ref DiskSize
       EbsOptimized: true
       IamInstanceProfile: !Ref InstanceProfile
       ImageId: !Ref ImageId
