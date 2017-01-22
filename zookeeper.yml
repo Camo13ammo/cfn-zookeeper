@@ -147,15 +147,15 @@ Resources:
       GroupDescription: Zookeeper Security Group
       SecurityGroupIngress:
         - CidrIp: 0.0.0.0/0
-          IpProtocol: 6
+          IpProtocol: -1
           FromPort: 2181
           ToPort: 2181
         - CidrIp: 0.0.0.0/0
-          IpProtocol: 6
+          IpProtocol: -1
           FromPort: 2888
           ToPort: 2888
         - CidrIp: 0.0.0.0/0
-          IpProtocol: 6
+          IpProtocol: -1
           FromPort: 3888
           ToPort: 3888
         - CidrIp: 0.0.0.0/0
