@@ -1,6 +1,7 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: Highly Available Zookeeper Cluster
 
+####################
 Parameters:
   ImageId:
     Default: ami-f56181e3
@@ -46,9 +47,19 @@ Parameters:
     Default: 60
     Type: Number
 
+  PoolMaxCpuUtilization:
+    Description: The maximum amount of CPU utilization desirable on each node
+    Default: 90
+    Type: Number
+
   PoolMaxSize:
     Description: The maximum number of nodes in the pool
     Default: 9
+    Type: Number
+
+  PoolMinCpuUtilization:
+    Description: The minimum amount of CPU utilization desirable on each node
+    Default: 70
     Type: Number
 
   PoolMinSize:
@@ -73,11 +84,26 @@ Parameters:
     Description: The VPC containing subnets
     Type: AWS::EC2::VPC::Id
 
+####################
+Outputs:
+  ExhibitorAddress:
+    Description: The Exhibitor UI address
+    Export:
+      Name: !Sub ${AWS::StackName}-ExhibitorAddress
+    Value: !Sub http://${LoadBalancer.DNSName}:8080/exhibitor/v1/ui/index.html
+
+  ZkClientAddress:
+    Description: The Zookeeper client address
+    Export:
+      Name: !Sub ${AWS::StackName}-ZkClientAddress
+    Value: !Sub ${LoadBalancer.DNSName}:2181
+
+####################
 Resources:
   Store:
     Type: AWS::S3::Bucket
 
-  ZkInstanceRole:
+  InstanceRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -103,22 +129,18 @@ Resources:
                 Effect: Allow
                 Resource: !Sub arn:aws:s3:::${Store}/*
 
-  ZkInstanceProfile:
+  InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
       Path: /
       Roles:
-        - !Ref ZkInstanceRole
+        - !Ref InstanceRole
 
-  ZkSecurityGroup:
+  SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Zookeeper Security Group
       SecurityGroupIngress:
-        - CidrIp: 0.0.0.0/0
-          IpProtocol: 6
-          FromPort: 22
-          ToPort: 22
         - CidrIp: 0.0.0.0/0
           IpProtocol: 6
           FromPort: 2181
@@ -142,7 +164,7 @@ Resources:
           ToPort: 65535
       VpcId: !Ref Vpc
 
-  ZkLaunchConfiguration:
+  LaunchConfiguration:
     Type: AWS::AutoScaling::LaunchConfiguration
     Properties:
       BlockDeviceMappings:
@@ -151,12 +173,12 @@ Resources:
             DeleteOnTermination: true
             VolumeSize: 60
       EbsOptimized: true
-      IamInstanceProfile: !Ref ZkInstanceProfile
+      IamInstanceProfile: !Ref InstanceProfile
       ImageId: !Ref ImageId
       InstanceType: !Ref InstanceType
       KeyName: !Ref KeyName
       SecurityGroups:
-        - !Ref ZkSecurityGroup
+        - !Ref SecurityGroup
       UserData:
         Fn::Base64: !Sub |
           #! /bin/bash -ex
@@ -259,9 +281,9 @@ Resources:
           bash -xe /opt/bootstrap.sh
 
           # completed
-          docker run aws/cli cfn-signal -e $? --stack ${AWS::StackName} --resource ZkAutoScalingGroup
+          docker run aws/cli cfn-signal -e $? --stack ${AWS::StackName} --resource AutoScalingGroup
 
-  ZkLoadBalancer:
+  LoadBalancer:
     Type: AWS::ElasticLoadBalancing::LoadBalancer
     Properties:
       CrossZone: true
@@ -282,12 +304,12 @@ Resources:
           Protocol: HTTP
       Scheme: internet-facing
       SecurityGroups:
-        - !Ref ZkSecurityGroup
+        - !Ref SecurityGroup
       Subnets:
         - !Ref SubnetOne
         - !Ref SubnetTwo
 
-  ZkAutoScalingGroup:
+  AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     CreationPolicy:
       ResourceSignal:
@@ -298,10 +320,58 @@ Resources:
       HealthCheckGracePeriod: !Ref LbCheckGracePeriod
       HealthCheckType: ELB
       LoadBalancerNames:
-        - !Ref ZkLoadBalancer
-      LaunchConfigurationName: !Ref ZkLaunchConfiguration
+        - !Ref LoadBalancer
+      LaunchConfigurationName: !Ref LaunchConfiguration
       MaxSize: !Ref PoolMaxSize
       MinSize: !Ref PoolMinSize
       VPCZoneIdentifier:
         - !Ref SubnetOne
         - !Ref SubnetTwo
+
+  GroupUpScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      Cooldown: !Ref PoolCooldownPeriod
+      ScalingAdjustment: 1
+
+  GroupDownScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      Cooldown: !Ref PoolCooldownPeriod
+      ScalingAdjustment: -1
+
+  HighCpuAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmActions:
+        - !Ref GroupUpScalingPolicy
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoScalingGroup
+      EvaluationPeriods: 1
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Period: 60
+      Statistic: Average
+      Threshold: !Ref PoolMaxCpuUtilization
+
+  LowCpuAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmActions:
+        - !Ref GroupDownScalingPolicy
+      ComparisonOperator: LessThanThreshold
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoScalingGroup
+      EvaluationPeriods: 1
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Period: 60
+      Statistic: Average
+      Threshold: !Ref PoolMinCpuUtilization
