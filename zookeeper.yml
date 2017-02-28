@@ -15,7 +15,7 @@ Parameters:
 
   InstanceType:
     Description: The instance type of each node
-    Default: m4.large
+    Default: t2.micro
     Type: String
 
   KeyName:
@@ -34,16 +34,16 @@ Parameters:
 
   LbCheckTimeout:
     Description: The number of seconds for a check to complete (must be less than LbCheckInterval)
-    Default: 59
+    Default: 5
     Type: Number
 
   LbHealthyThreshold:
-    Description: The number of consecutive successful checks to deem a node healthy
+    Description: The number of consecutive successful checks to mark a node healthy
     Default: 3
     Type: Number
 
   LbUnhealthyThreshold:
-    Description: The number of consecutive unsuccessful checks to deem a node unhealthy
+    Description: The number of consecutive unsuccessful checks to mark a node unhealthy
     Default: 3
     Type: Number
 
@@ -147,26 +147,21 @@ Resources:
       GroupDescription: Zookeeper Security Group
       SecurityGroupIngress:
         - CidrIp: 0.0.0.0/0
-          IpProtocol: -1
+          IpProtocol: 6
           FromPort: 2181
           ToPort: 2181
         - CidrIp: 0.0.0.0/0
-          IpProtocol: -1
+          IpProtocol: 6
           FromPort: 2888
           ToPort: 2888
         - CidrIp: 0.0.0.0/0
-          IpProtocol: -1
+          IpProtocol: 6
           FromPort: 3888
           ToPort: 3888
         - CidrIp: 0.0.0.0/0
           IpProtocol: 6
           FromPort: 8080
           ToPort: 8080
-      SecurityGroupEgress:
-        - CidrIp: 0.0.0.0/0
-          IpProtocol: -1
-          FromPort: 0
-          ToPort: 65535
       VpcId: !Ref Vpc
 
   LaunchConfiguration:
