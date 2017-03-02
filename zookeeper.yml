@@ -15,7 +15,7 @@ Parameters:
 
   InstanceType:
     Description: The instance type of each node
-    Default: t2.micro
+    Default: m4.large
     Type: String
 
   KeyName:
@@ -24,7 +24,7 @@ Parameters:
 
   LbCheckGracePeriod:
     Description: The number of seconds to wait for a node to start before health checking
-    Default: 300
+    Default: 3000
     Type: Number
 
   LbCheckInterval:
@@ -49,12 +49,17 @@ Parameters:
 
   PoolCooldownPeriod:
     Description: The number of seconds to wait after successfully scaling up or down
-    Default: 60
+    Default: 300
     Type: Number
 
   PoolMaxCpuUtilization:
     Description: The maximum amount of CPU utilization desirable on each node
-    Default: 90
+    Default: 85
+    Type: Number
+
+  PoolMaxCpuUtilizationPeriod:
+    Description: The number of seconds of maximum CPU utilization desirable on each node
+    Default: 60
     Type: Number
 
   PoolMaxSize:
@@ -67,6 +72,11 @@ Parameters:
     Default: 70
     Type: Number
 
+  PoolMinCpuUtilizationPeriod:
+    Description: The number of seconds of minimum CPU utilization desirable on each node
+    Default: 300
+    Type: Number
+
   PoolMinSize:
     Description: The minimum number of nodes in the pool
     Default: 3
@@ -74,7 +84,7 @@ Parameters:
 
   StackCreationTimeout:
     Description: The amount of time to wait for stack creation
-    Default: PT30M
+    Default: PT60M
     Type: String
 
   SubnetOne:
@@ -356,7 +366,7 @@ Resources:
       EvaluationPeriods: 1
       MetricName: CPUUtilization
       Namespace: AWS/EC2
-      Period: 60
+      Period: !Ref PoolMaxCpuUtilizationPeriod
       Statistic: Average
       Threshold: !Ref PoolMaxCpuUtilization
 
@@ -372,6 +382,6 @@ Resources:
       EvaluationPeriods: 1
       MetricName: CPUUtilization
       Namespace: AWS/EC2
-      Period: 60
+      Period: !Ref PoolMinCpuUtilizationPeriod
       Statistic: Average
       Threshold: !Ref PoolMinCpuUtilization
