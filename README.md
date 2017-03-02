@@ -2,7 +2,7 @@
 _AWS CloudFormation template for a highly-available Zookeeper cluster_
 
 ## Features
-- Creates a three node auto-scaling cluster of Zookeeper instances
+- Three node auto-scaling cluster of Zookeeper instances
 - Dynamic configuration managed by Exhibitor with S3
 - Load Balancer balancing on ports 2181 and 8080
 - Exports the addresses of Zookeeper and Exhibitor
